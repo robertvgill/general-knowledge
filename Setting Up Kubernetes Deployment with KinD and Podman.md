@@ -151,7 +151,7 @@ kind version 0.22.0
 
 **5. Create a single node kind cluster**
 ```sh
-kind create cluster --name local-kind-cluster --config <(echo '
+kind create cluster --name cluster-1 --config <(echo '
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 networking:
@@ -177,7 +177,7 @@ nodes:
 
 Example Output:
 ```sh
-$ kind create cluster --name local-kind-cluster --config <(echo '
+$ kind create cluster --name cluster-1 --config <(echo '
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 networking:
@@ -202,28 +202,28 @@ nodes:
 using podman due to KIND_EXPERIMENTAL_PROVIDER
 enabling experimental podman provider
 Cgroup controller detection is not implemented for Podman. If you see cgroup-related errors, you might need to set systemd property "Delegate=yes", see https://kind.sigs.k8s.io/docs/user/rootless/
-Creating cluster "local-kind-cluster" ...
+Creating cluster "cluster-1" ...
  ✓ Ensuring node image (kindest/node:v1.29.2) 🖼
  ✓ Preparing nodes 📦
  ✓ Writing configuration 📜
  ✓ Starting control-plane 🕹️
  ✓ Installing CNI 🔌
  ✓ Installing StorageClass 💾
-Set kubectl context to "kind-local-kind-cluster"
+Set kubectl context to "kind-cluster-1"
 You can now use your cluster with:
 
-kubectl cluster-info --context kind-local-kind-cluster
+kubectl cluster-info --context kind-cluster-1
 
 Have a question, bug, or feature request? Let us know! https://kind.sigs.k8s.io/#community 🙂
 ```
 
 **6. Confirm that kubectl can connect to the kind-based Kubernetes cluster**
 ```sh
-kubectl cluster-info --context kind-local-kind-cluster
+kubectl cluster-info --context kind-cluster-1
 ```
 Example Output:
 ```sh
-$ kubectl cluster-info --context kind-local-kind-cluster
+$ kubectl cluster-info --context kind-cluster-1
 Kubernetes control plane is running at https://127.0.0.1:6443
 CoreDNS is running at https://127.0.0.1:6443/api/v1/namespaces/kube-system/services/kube-dns:dns/proxy
 
@@ -312,7 +312,7 @@ Example Output:
 $ kind get clusters
 using podman due to KIND_EXPERIMENTAL_PROVIDER
 enabling experimental podman provider
-local-kind-cluster
+cluster-1
 ```
 
 **2. Check what Podman containers are running**
@@ -323,7 +323,7 @@ Example Output:
 ```sh
 $ podman ps -a
 CONTAINER ID  IMAGE                                                                                           COMMAND               CREATED         STATUS             PORTS                                                           NAMES
-7ab3b9020454  docker.io/kindest/node@sha256:51a1434a5397193442f0be2a297b488b6c919ce8a3931be0ce822606ea5ca245                        25 minutes ago  Up 25 minutes ago  127.0.0.1:6443->6443/tcp, 0.0.0.0:30000-30002->30000-30002/tcp  local-kind-cluster-control-plane
+7ab3b9020454  docker.io/kindest/node@sha256:51a1434a5397193442f0be2a297b488b6c919ce8a3931be0ce822606ea5ca245                        25 minutes ago  Up 25 minutes ago  127.0.0.1:6443->6443/tcp, 0.0.0.0:30000-30002->30000-30002/tcp  cluster-1-control-plane
 ```
 
 **3. Confirm kubectl knows about the newly creted cluster**
@@ -345,7 +345,7 @@ Example Output:
 ```sh
 $ kubectl get nodes
 NAME                               STATUS   ROLES           AGE   VERSION
-local-kind-cluster-control-plane   Ready    control-plane   31m   v1.29.2
+cluster-1-control-plane   Ready    control-plane   31m   v1.29.2
 ```
 
 **5. Confirm that a fully functional Kubernetes node was started**
@@ -358,12 +358,12 @@ $ kubectl get pods -A
 NAMESPACE            NAME                                                       READY   STATUS    RESTARTS   AGE
 kube-system          coredns-76f75df574-5cc28                                   1/1     Running   0          34m
 kube-system          coredns-76f75df574-xpmxj                                   1/1     Running   0          34m
-kube-system          etcd-local-kind-cluster-control-plane                      1/1     Running   0          34m
+kube-system          etcd-cluster-1-control-plane                      1/1     Running   0          34m
 kube-system          kindnet-74jj7                                              1/1     Running   0          34m
-kube-system          kube-apiserver-local-kind-cluster-control-plane            1/1     Running   0          34m
-kube-system          kube-controller-manager-local-kind-cluster-control-plane   1/1     Running   0          34m
+kube-system          kube-apiserver-cluster-1-control-plane            1/1     Running   0          34m
+kube-system          kube-controller-manager-cluster-1-control-plane   1/1     Running   0          34m
 kube-system          kube-proxy-9jwl6                                           1/1     Running   0          34m
-kube-system          kube-scheduler-local-kind-cluster-control-plane            1/1     Running   0          34m
+kube-system          kube-scheduler-cluster-1-control-plane            1/1     Running   0          34m
 local-path-storage   local-path-provisioner-7577fdbbfb-lpvq8                    1/1     Running   0          34m
 ```
 
@@ -376,7 +376,7 @@ Example Output:
 ```sh
 $ kubectl get nodes -o wide
 NAME                               STATUS   ROLES           AGE   VERSION   INTERNAL-IP   EXTERNAL-IP   OS-IMAGE                         KERNEL-VERSION                       CONTAINER-RUNTIME
-local-kind-cluster-control-plane   Ready    control-plane   36m   v1.29.2   10.89.1.2     <none>        Debian GNU/Linux 12 (bookworm)   5.15.146.1-microsoft-standard-WSL2   containerd://1.7.13
+cluster-1-control-plane   Ready    control-plane   36m   v1.29.2   10.89.1.2     <none>        Debian GNU/Linux 12 (bookworm)   5.15.146.1-microsoft-standard-WSL2   containerd://1.7.13
 ```
 
 ## Troubleshooting
