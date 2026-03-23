@@ -1,0 +1,18 @@
+{
+  "profiles": [
+    {
+      "name": "openshift-prod",
+      "kubeconfig": "%USERPROFILE%\\kubeconfig\\openshift-config",
+      "context": "default/api-creditmate-np-ocp-dev-net:6443/system:serviceaccount:default:automation-sa",
+      "cluster": "openshift",
+      "namespacePattern": "^credit|^crm"
+    },
+    {
+      "name": "ske-prod",
+      "kubeconfig": "%USERPROFILE%\\kubeconfig\\ske-config",
+      "context": "api-skek001-ark-50933.ske.standardchartered.com:6443",
+      "cluster": "ske",
+      "namespacePattern": "^t-55331-"
+    }
+  ]
+}
