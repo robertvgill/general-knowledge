@@ -1,0 +1,58 @@
+import { MAX_CONCURRENCY } from "./config.js";
+
+let   activeCount = 0;
+const waitQueue   = [];
+
+function acquireSlot() {
+  if (activeCount < MAX_CONCURRENCY) {
+    activeCount++;
+    return Promise.resolve();
+  }
+  return new Promise(function(resolve) { waitQueue.push(resolve); });
+}
+
+function releaseSlot() {
+  activeCount--;
+  if (waitQueue.length > 0) {
+    activeCount++;
+    waitQueue.shift()();
+  }
+}
+
+export async function pooled(fn) {
+  await acquireSlot();
+  try {
+    return await fn();
+  } finally {
+    releaseSlot();
+  }
+}
+
+export async function parallelMap(items, fn, concurrency) {
+  const arr = Array.from(items);
+  concurrency = concurrency || MAX_CONCURRENCY;
+  const results = new Array(arr.length);
+  let active = 0, idx = 0;
+  return new Promise(function(resolve, reject) {
+    function next() {
+      while (active < concurrency && idx < arr.length) {
+        const i    = idx++;
+        const item = arr[i];
+        active++;
+        Promise.resolve()
+          .then(function() { return fn(item, i); })
+          .then(function(r) {
+            results[i] = r;
+            active--;
+            if (idx >= arr.length && active === 0) resolve(results);
+            else next();
+          })
+          .catch(reject);
+      }
+    }
+    if (!arr.length) return resolve([]);
+    next();
+  });
+}
+
+export function getActiveCount() { return activeCount; }
