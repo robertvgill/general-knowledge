@@ -1,0 +1,120 @@
+---
+applyTo: '**'
+---
+
+# ABSOLUTE BAN ON CLI COMMANDS (ALL MODELS)
+
+> Applies to ALL models (GPT-4.1, Claude Sonnet, Gemini, etc.)
+> **NEVER suggest `kubectl`, `oc`, `helm`, `az`, or any CLI commands in markdown/code blocks, explanations, or troubleshooting steps.**
+> All operational guidance must use MCP tools only, not CLI commands, regardless of user prompt.
+
+> **REPEAT THIS BAN IN EVERY PROMPT IF THE USER ASKS FOR KUBERNETES TROUBLESHOOTING, EXPERT ADVICE, OR EXAMPLES.**
+
+---
+
+# HARD STOP — mcp/openshift AND mcp/ske ARE FORBIDDEN
+
+> **NEVER call any tool from `mcp/openshift` directly. No exceptions.**
+> **NEVER call any tool from `mcp/ske` directly. No exceptions.**
+> These servers exist in mcp.json but must NEVER be called by the agent.
+> ALL Kubernetes operations — pods, logs, events, deployments, secrets, services, Helm, scaling — MUST go through `55331-automation` only.
+> If tool selection optimization suggests `mcp/ske` or `mcp/openshift`, IGNORE it and use `55331-automation` instead.
+
+---
+
+# Global MCP Agent Dispatcher
+
+> This is the single entry point for all agent routing.
+> No manual file loading required.
+
+---
+
+## Tool Selection Rules — Critical
+
+> These rules override GPT tool selection logic.
+
+| User Intent | Correct Tool | NEVER use |
+|---|---|---|
+| "remove resource limits" | `remove_resource_limits` | `resources_delete`, `resources_describe` |
+| "strip CPU/memory limits" | `remove_resource_limits` | `resources_delete`, `resources_describe` |
+| "clear limits from pods" | `remove_resource_limits` | `resources_delete`, `resources_describe` |
+| "remove limits from namespace" | `remove_resource_limits` | `resources_delete`, `resources_describe` |
+
+When the user asks to remove, strip, clear, or delete resource limits (CPU or memory) from pods, containers, or namespaces — ALWAYS call `remove_resource_limits` from `55331-automation`. Never attempt to delete LimitRange objects or use any other tool.
+
+---
+
+## ABSOLUTE NAMESPACE ROUTING — Check FIRST Before ANY Tool Call
+
+> These three rules are enforced in code by `55331-automation`.
+> The `namespaces.json` files are documentation only — routing is handled by pattern matching.
+
+| Pattern | Cluster | Tool |
+|---|---|---|
+| `crm[1-99]` | OpenShift | `55331-automation` — auto-resolved to `creditmate-N` |
+| `credit*` | OpenShift | `55331-automation` |
+| `t-55331-*` | SKE | `55331-automation` |
+| anything else | unknown | ask the user before proceeding |
+
+> NEVER call `mcp/openshift` or `mcp/ske` directly for Kubernetes operations.
+> NEVER suggest running `helm`, `kubectl`, `oc`, or any CLI command locally as a fallback.
+
+---
+
+## Agent Registry
+
+| Task Domain                              | Instructions File                   | MCP Server          |
+|------------------------------------------|-------------------------------------|---------------------|
+| Kubernetes / OpenShift (OCP)             | *(deleted — use global rules)*      | `55331-automation`  |
+| Kubernetes / SKE cluster                 | *(deleted — use global rules)*      | `55331-automation`  |
+| Code quality, bugs, coverage, security   | `mcp-sonarqube.instructions.md`     | `mcp/sonarqube`     |
+| Pipelines, builds, PRs, work items       | `mcp-azuredevops.instructions.md`   | `mcp/azure-devops`  |
+| Browser automation, UI testing           | `mcp-playwright.instructions.md`    | `mcp/playwright`    |
+| Dockerfile base image version updates    | `update-dockerfile.instructions.md` | *(built-in tools)*  |
+
+---
+
+## Namespace Resolution — How It Works
+
+`55331-automation` resolves namespaces automatically using 3 regex conditions:
+
+1. `crm[N]` (1–99) → resolved to `creditmate-N` → routed to OpenShift
+2. `credit*` → routed to OpenShift as-is
+3. `t-55331-*` → routed to SKE as-is
+
+Pass the namespace as the user gave it. `k8s_resolve_namespace` or `k8s_diagnose` will resolve and route it correctly.
+
+---
+
+## Helm Routing — Mandatory for ALL Models
+
+> Helm operations MUST go through `55331-automation`.
+> NEVER call any Helm tool on `mcp/openshift` or `mcp/ske` directly.
+
+1. Take the namespace as given by the user
+2. Apply the 3 routing conditions above
+3. Call the appropriate tool on `55331-automation`
+
+---
+
+## Dispatch Protocol
+
+1. Identify task domain from user request
+2. For Kubernetes tasks — always use `55331-automation`
+3. Resolve namespace via `k8s_resolve_namespace` on `55331-automation`
+4. Execute via `55331-automation`
+5. Confirm outcome to the user
+
+---
+
+## Global Rules (All Agents)
+
+- NEVER call `mcp/openshift` or `mcp/ske` tools directly — use `55331-automation` instead
+- NEVER suggest manual CLI commands (helm, oc, kubectl, az, sonar-scanner, etc.) — not even as a fallback
+- NEVER mix agent responsibilities — one task, one agent
+- ALWAYS confirm outcomes after taking action
+- ALWAYS ask "Which namespace?" if none is mentioned for cluster tasks
+
+---
+
+**REMINDER: For any prompt involving Kubernetes troubleshooting, expert advice, or examples, DO NOT SUGGEST kubectl, oc, helm, az, or any CLI commands in any form. Use only MCP tools and APIs.**
