@@ -1,0 +1,201 @@
+import { k8sCall } from "../profiles.js";
+import { resolveNamespace } from "../routing.js";
+import { pooled, parallelMap } from "../concurrency.js";
+
+const PH = { headers: { "Content-Type": "application/merge-patch+json" } };
+
+function getLimits(c) {
+  return c && c.resources && c.resources.limits && Object.keys(c.resources.limits).length > 0
+    ? c.resources.limits : null;
+}
+
+function getRequests(c) {
+  return c && c.resources && c.resources.requests && Object.keys(c.resources.requests).length > 0
+    ? c.resources.requests : null;
+}
+
+function toPlain(obj) {
+  if (!obj) return {};
+  const r = {};
+  for (const k of Object.keys(obj)) r[k] = String(obj[k]);
+  return r;
+}
+
+function auditContainers(templateSpec, removeReqs) {
+  const withLimits    = [];
+  const withoutLimits = [];
+  const patchContainers        = [];
+  const patchInitContainers    = [];
+  const patchEphemeral         = [];
+
+  const TYPES = [
+    { field: "containers",          label: "container",     patch: patchContainers },
+    { field: "initContainers",      label: "initContainer", patch: patchInitContainers },
+    { field: "ephemeralContainers", label: "sidecar",       patch: patchEphemeral },
+  ];
+
+  let changed = false;
+
+  for (const t of TYPES) {
+    for (const c of (templateSpec[t.field] || [])) {
+      const limits   = getLimits(c);
+      const requests = getRequests(c);
+
+      const patchC = { name: c.name, resources: {} };
+      if (limits) {
+        withLimits.push({ type: t.label, name: c.name, limits: toPlain(limits), requests: requests ? toPlain(requests) : null });
+        patchC.resources.limits = null;
+        changed = true;
+      } else {
+        withoutLimits.push({ type: t.label, name: c.name });
+      }
+      if (removeReqs && requests) {
+        patchC.resources.requests = null;
+        changed = true;
+      }
+      t.patch.push(patchC);
+    }
+  }
+
+  const patchSpec = {};
+  if (patchContainers.length)     patchSpec.containers        = patchContainers;
+  if (patchInitContainers.length) patchSpec.initContainers    = patchInitContainers;
+  if (patchEphemeral.length)      patchSpec.ephemeralContainers = patchEphemeral;
+
+  return { withLimits, withoutLimits, patchSpec, changed };
+}
+
+async function resolveNamespaces(pattern, clients) {
+  if (!pattern.includes("*") && !pattern.includes("?")) return [pattern];
+  const r = await k8sCall(function() { return clients.core.listNamespace({}); });
+  if (!r.success || !r.data) return [pattern];
+  const rx = new RegExp("^" + pattern.replace(/\*/g, ".*").replace(/\?/g, ".") + "$");
+  return (r.data.items || [])
+    .map(function(n) { return n.metadata.name; })
+    .filter(function(n) { return rx.test(n); });
+}
+
+async function processController(clients, nsName, kind, item, dryRun, removeReqs) {
+  const name         = item.metadata && item.metadata.name;
+  const templateSpec = item.spec && item.spec.template && item.spec.template.spec;
+  if (!name || !templateSpec) return null;
+
+  const hasAny = [
+    ...(templateSpec.containers          || []),
+    ...(templateSpec.initContainers      || []),
+    ...(templateSpec.ephemeralContainers || []),
+  ].some(function(c) { return !!getLimits(c); });
+
+  if (!hasAny) return { ns: nsName, name, kind, status: "no-limits", withLimits: [], withoutLimits: [] };
+
+  const audit = auditContainers(templateSpec, removeReqs);
+
+  if (!audit.changed) return { ns: nsName, name, kind, status: "no-limits", withLimits: [], withoutLimits: audit.withoutLimits };
+
+  if (dryRun) return { ns: nsName, name, kind, status: "would-patch", withLimits: audit.withLimits, withoutLimits: audit.withoutLimits };
+
+  const body   = { spec: { template: { spec: audit.patchSpec } } };
+  let   result;
+
+  if (kind === "Deployment")
+    result = await pooled(function() { return k8sCall(function() { return clients.apps.patchNamespacedDeployment({ name, namespace: nsName, body }, undefined, undefined, undefined, undefined, undefined, undefined, PH); }); });
+  else if (kind === "StatefulSet")
+    result = await pooled(function() { return k8sCall(function() { return clients.apps.patchNamespacedStatefulSet({ name, namespace: nsName, body }, undefined, undefined, undefined, undefined, undefined, undefined, PH); }); });
+  else if (kind === "DaemonSet")
+    result = await pooled(function() { return k8sCall(function() { return clients.apps.patchNamespacedDaemonSet({ name, namespace: nsName, body }, undefined, undefined, undefined, undefined, undefined, undefined, PH); }); });
+  else if (kind === "DeploymentConfig")
+    result = await pooled(function() { return k8sCall(function() { return clients.custom.patchNamespacedCustomObject("apps.openshift.io", "v1", nsName, "deploymentconfigs", name, body, undefined, undefined, undefined, PH); }); });
+
+  return {
+    ns: nsName, name, kind,
+    status:        result.success ? "patched" : "error",
+    withLimits:    audit.withLimits,
+    withoutLimits: audit.withoutLimits,
+    error:         result.success ? null : result.output
+  };
+}
+
+async function processNamespace(nsName, clients, dryRun, removeReqs) {
+  const [deplR, stsR, dsR, dcR] = await Promise.all([
+    k8sCall(function() { return clients.apps.listNamespacedDeployment({ namespace: nsName }); }),
+    k8sCall(function() { return clients.apps.listNamespacedStatefulSet({ namespace: nsName }); }),
+    k8sCall(function() { return clients.apps.listNamespacedDaemonSet({ namespace: nsName }); }),
+    k8sCall(function() { return clients.custom.listNamespacedCustomObject("apps.openshift.io", "v1", nsName, "deploymentconfigs"); }),
+  ]);
+
+  const controllers = [];
+  for (const d of (deplR.data && deplR.data.items || [])) controllers.push({ kind: "Deployment",       item: d });
+  for (const s of (stsR.data  && stsR.data.items  || [])) controllers.push({ kind: "StatefulSet",      item: s });
+  for (const d of (dsR.data   && dsR.data.items   || [])) controllers.push({ kind: "DaemonSet",        item: d });
+  for (const d of (dcR.data   && dcR.data.items   || [])) controllers.push({ kind: "DeploymentConfig", item: d });
+
+  const results = await parallelMap(controllers, function(c) {
+    return processController(clients, nsName, c.kind, c.item, dryRun, removeReqs);
+  });
+
+  return results.filter(function(r) { return r !== null; });
+}
+
+export async function handleRemoveResourceLimits(args) {
+  const namespaceArg = args.namespace;
+  const dryRun       = args.dryRun         || false;
+  const removeReqs   = args.removeRequests || false;
+
+  const firstRoute = resolveNamespace(namespaceArg.replace(/\*/g, "a"));
+  const { getK8sClients } = await import("../profiles.js");
+  const clients    = getK8sClients(firstRoute.profile);
+
+  const namespaces = await resolveNamespaces(namespaceArg, clients);
+  if (!namespaces.length) return { content: [{ type: "text", text: "No namespaces matched: " + namespaceArg }] };
+
+  const nestedResults = await parallelMap(namespaces, function(nsName) {
+    return processNamespace(nsName, clients, dryRun, removeReqs);
+  });
+  const all = nestedResults.reduce(function(a, r) { return a.concat(r); }, []);
+
+  const target   = all.filter(function(r) { return r.status === (dryRun ? "would-patch" : "patched"); });
+  const noLimits = all.filter(function(r) { return r.status === "no-limits"; });
+  const errors   = all.filter(function(r) { return r.status === "error"; });
+
+  const lines = [];
+  lines.push((dryRun ? "[DRY RUN] " : "") + "Remove Resource Limits — " + namespaceArg);
+  lines.push("Scanned " + all.length + " controllers across " + namespaces.length + " namespace(s).");
+  lines.push("");
+
+  if (target.length === 0) {
+    lines.push("No resource limits found.");
+  } else {
+    lines.push(dryRun ? "The following would be patched:" : "The following were patched:");
+    lines.push("");
+    target.forEach(function(r, idx) {
+      const total   = (r.withLimits || []).length + (r.withoutLimits || []).length;
+      const limited = (r.withLimits || []).length;
+      lines.push((idx + 1) + ". " + r.kind + ": " + r.name + "  (" + limited + "/" + total + " containers have limits)");
+      (r.withLimits || []).forEach(function(f) {
+        const req = f.requests ? "  requests: cpu=" + (f.requests.cpu || "-") + ", memory=" + (f.requests.memory || "-") : "";
+        lines.push("    > [" + f.type + "] " + f.name + " — LIMITS: cpu=" + (f.limits.cpu || "-") + ", memory=" + (f.limits.memory || "-") + req);
+      });
+      (r.withoutLimits || []).forEach(function(f) {
+        lines.push("    > [" + f.type + "] " + f.name + " — no limits");
+      });
+    });
+  }
+
+  if (errors.length) {
+    lines.push("");
+    lines.push("Errors (" + errors.length + "):");
+    errors.forEach(function(r) { lines.push("  - " + r.kind + "/" + r.name + ": " + r.error); });
+  }
+
+  if (noLimits.length) {
+    lines.push("");
+    lines.push(noLimits.length + " controller(s) had no limits set.");
+  }
+
+  if (dryRun && target.length > 0) {
+    lines.push("");
+    lines.push("No actual changes were made. Run without dryRun to apply.");
+  }
+
+  return { content: [{ type: "text", text: lines.join("\n") }] };
+}
